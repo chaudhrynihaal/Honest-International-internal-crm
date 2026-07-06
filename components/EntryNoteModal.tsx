@@ -48,7 +48,7 @@ export function EntryNoteModal({ kind, id, amount, label, note, onClose, onSucce
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="card relative z-10 w-full max-w-sm p-6">
+      <div className="card relative z-10 max-h-[90vh] w-full max-w-sm overflow-y-auto p-6">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-foreground">Note</h2>
           <button

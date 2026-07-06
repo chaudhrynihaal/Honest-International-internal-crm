@@ -64,7 +64,7 @@ export function TAccountCard({ account }: { account: ContactTAccount }) {
   }
 
   return (
-    <div className="card p-10">
+    <div className="card p-5 sm:p-10">
       <div className="group relative mb-3 text-center">
         <button
           type="button"
@@ -94,7 +94,7 @@ export function TAccountCard({ account }: { account: ContactTAccount }) {
             </button>
           </div>
         ) : (
-          <div className="absolute right-0 top-0 hidden items-center gap-1.5 group-hover:flex">
+          <div className="absolute right-0 top-0 flex items-center gap-1.5 md:hidden md:group-hover:flex">
             <button
               type="button"
               onClick={() => setEditingContact(true)}
@@ -124,8 +124,8 @@ export function TAccountCard({ account }: { account: ContactTAccount }) {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 divide-x divide-black/10 border-t border-black/10">
-        <div className="min-w-0 p-9">
+      <div className="grid grid-cols-1 divide-y divide-black/10 border-t border-black/10 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+        <div className="min-w-0 p-4 sm:p-9">
           <p className="mb-4 text-center text-sm font-semibold uppercase tracking-wide text-foreground/40">
             Debit (Paid)
           </p>
@@ -181,7 +181,7 @@ export function TAccountCard({ account }: { account: ContactTAccount }) {
                         </button>
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1 pointer-events-none opacity-0 transition-opacity group-hover/line:pointer-events-auto group-hover/line:opacity-100">
+                      <span className="flex items-center gap-1 opacity-100 pointer-events-auto transition-opacity md:pointer-events-none md:opacity-0 md:group-hover/line:pointer-events-auto md:group-hover/line:opacity-100">
                         <button
                           type="button"
                           onClick={() => setEditingDebit(l)}
@@ -206,7 +206,7 @@ export function TAccountCard({ account }: { account: ContactTAccount }) {
             </ul>
           )}
         </div>
-        <div className="min-w-0 p-9">
+        <div className="min-w-0 p-4 sm:p-9">
           <p className="mb-4 text-center text-sm font-semibold uppercase tracking-wide text-foreground/40">
             Credit (Billed)
           </p>
@@ -262,7 +262,7 @@ export function TAccountCard({ account }: { account: ContactTAccount }) {
                         </button>
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1 pointer-events-none opacity-0 transition-opacity group-hover/line:pointer-events-auto group-hover/line:opacity-100">
+                      <span className="flex items-center gap-1 opacity-100 pointer-events-auto transition-opacity md:pointer-events-none md:opacity-0 md:group-hover/line:pointer-events-auto md:group-hover/line:opacity-100">
                         <button
                           type="button"
                           onClick={() =>
