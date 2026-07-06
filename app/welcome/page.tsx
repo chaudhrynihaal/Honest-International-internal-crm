@@ -45,9 +45,6 @@ export default function WelcomePage() {
       </div>
 
       <div className="relative flex flex-1 flex-col items-center justify-center gap-7 px-6">
-        <div className="pointer-events-none absolute h-72 w-72 rounded-full border border-[#c9a24b]/20" />
-        <div className="pointer-events-none absolute h-60 w-60 rounded-full border border-[#c9a24b]/30" />
-
         <p className="text-[11px] font-medium uppercase tracking-[0.35em] text-[#c9a24b]">
           Welcome back
         </p>
