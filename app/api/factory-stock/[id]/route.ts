@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getUser } from "@/lib/supabase/server";
 
 const updateLotSchema = z.object({
@@ -30,23 +29,31 @@ export async function PATCH(
     );
   }
 
-  try {
-    const lot = await prisma.factoryStock.update({
-      where: { id },
-      data: parsed.data,
-    });
+  const { yarnType, bags, rate, boughtAt } = parsed.data;
 
-    return NextResponse.json({ lot });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+  const { data: lot, error } = await supabaseAdmin
+    .from("FactoryStock")
+    .update({
+      ...(yarnType !== undefined ? { yarnType } : {}),
+      ...(bags !== undefined ? { bags } : {}),
+      ...(rate !== undefined ? { rate } : {}),
+      ...(boughtAt ? { boughtAt: boughtAt.toISOString() } : {}),
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") {
       return NextResponse.json(
         { error: "This stock lot no longer exists (it may have been deleted elsewhere)." },
         { status: 404 },
       );
     }
-    const message = err instanceof Error ? err.message : "Failed to update stock";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  return NextResponse.json({ lot });
 }
 
 export async function DELETE(
@@ -58,8 +65,6 @@ export async function DELETE(
   }
 
   const { id } = await params;
-
-  await prisma.factoryStock.delete({ where: { id } }).catch(() => null);
-
+  await supabaseAdmin.from("FactoryStock").delete().eq("id", id);
   return NextResponse.json({ ok: true });
 }

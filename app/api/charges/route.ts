@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { newId } from "@/lib/id";
 import { getUser } from "@/lib/supabase/server";
 
 const createChargeSchema = z.object({
@@ -27,9 +28,21 @@ export async function POST(request: Request) {
 
   const { contactId, amount, note, createdAt } = parsed.data;
 
-  const charge = await prisma.charge.create({
-    data: { contactId, amount, note: note || null, ...(createdAt ? { createdAt } : {}) },
-  });
+  const { data: charge, error } = await supabaseAdmin
+    .from("Charge")
+    .insert({
+      id: newId(),
+      contactId,
+      amount,
+      note: note || null,
+      ...(createdAt ? { createdAt: createdAt.toISOString() } : {}),
+    })
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   return NextResponse.json({ charge }, { status: 201 });
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { newId } from "@/lib/id";
 import { getFactoryStockSummary } from "@/lib/factoryStock";
 import { getUser } from "@/lib/supabase/server";
 
@@ -16,12 +17,20 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [lots, summary] = await Promise.all([
-    prisma.factoryStock.findMany({ orderBy: [{ yarnType: "asc" }, { boughtAt: "asc" }] }),
+  const [lotsRes, summary] = await Promise.all([
+    supabaseAdmin
+      .from("FactoryStock")
+      .select("*")
+      .order("yarnType", { ascending: true })
+      .order("boughtAt", { ascending: true }),
     getFactoryStockSummary(),
   ]);
 
-  return NextResponse.json({ lots, summary });
+  if (lotsRes.error) {
+    return NextResponse.json({ error: lotsRes.error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ lots: lotsRes.data, summary });
 }
 
 export async function POST(request: Request) {
@@ -40,9 +49,22 @@ export async function POST(request: Request) {
   }
 
   const { yarnType, bags, rate, boughtAt } = parsed.data;
-  const lot = await prisma.factoryStock.create({
-    data: { yarnType, bags, rate, ...(boughtAt ? { boughtAt } : {}) },
-  });
+
+  const { data: lot, error } = await supabaseAdmin
+    .from("FactoryStock")
+    .insert({
+      id: newId(),
+      yarnType,
+      bags,
+      rate,
+      ...(boughtAt ? { boughtAt: boughtAt.toISOString() } : {}),
+    })
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   return NextResponse.json({ lot }, { status: 201 });
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { newId } from "@/lib/id";
 import { getUser } from "@/lib/supabase/server";
 
 const createPaymentSchema = z.object({
@@ -27,18 +28,27 @@ export async function POST(request: Request) {
 
   const { contactId, amount, note, createdAt } = parsed.data;
 
-  const [entries, charges, debits] = await Promise.all([
-    prisma.entry.findMany({
-      where: { contactId, type: "sent", ratePerKg: { not: null } },
-      select: { quantity: true, ratePerKg: true },
-    }),
-    prisma.charge.aggregate({ _sum: { amount: true }, where: { contactId } }),
-    prisma.payment.aggregate({ _sum: { amount: true }, where: { contactId } }),
+  const [entriesRes, chargesRes, paymentsRes] = await Promise.all([
+    supabaseAdmin
+      .from("Entry")
+      .select("quantity, ratePerKg")
+      .eq("contactId", contactId)
+      .eq("type", "sent")
+      .not("ratePerKg", "is", null),
+    supabaseAdmin.from("Charge").select("amount").eq("contactId", contactId),
+    supabaseAdmin.from("Payment").select("amount").eq("contactId", contactId),
   ]);
 
-  const totalCredits =
-    entries.reduce((sum, e) => sum + (e.ratePerKg ?? 0) * e.quantity, 0) + (charges._sum.amount ?? 0);
-  const balanceDue = totalCredits - (debits._sum.amount ?? 0);
+  if (entriesRes.error) return NextResponse.json({ error: entriesRes.error.message }, { status: 500 });
+  if (chargesRes.error) return NextResponse.json({ error: chargesRes.error.message }, { status: 500 });
+  if (paymentsRes.error) return NextResponse.json({ error: paymentsRes.error.message }, { status: 500 });
+
+  const entryTotal = (entriesRes.data ?? []).reduce((sum, e) => sum + (e.ratePerKg ?? 0) * e.quantity, 0);
+  const chargeTotal = (chargesRes.data ?? []).reduce((sum, c) => sum + c.amount, 0);
+  const paymentTotal = (paymentsRes.data ?? []).reduce((sum, p) => sum + p.amount, 0);
+
+  const totalCredits = entryTotal + chargeTotal;
+  const balanceDue = totalCredits - paymentTotal;
 
   if (amount > balanceDue + 0.01) {
     return NextResponse.json(
@@ -47,9 +57,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const payment = await prisma.payment.create({
-    data: { contactId, amount, note: note || null, ...(createdAt ? { createdAt } : {}) },
-  });
+  const { data: payment, error } = await supabaseAdmin
+    .from("Payment")
+    .insert({ id: newId(), contactId, amount, note: note || null, ...(createdAt ? { createdAt: createdAt.toISOString() } : {}) })
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   return NextResponse.json({ payment }, { status: 201 });
 }

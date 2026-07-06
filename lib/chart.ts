@@ -1,21 +1,21 @@
 import { format, startOfDay, subDays } from "date-fns";
-import { prisma } from "./prisma";
+import { supabaseAdmin } from "./supabase/admin";
 import type { TrendPoint } from "./types";
 
 export async function getTrendData(days = 7): Promise<TrendPoint[]> {
   const now = new Date();
   const rangeStart = startOfDay(subDays(now, days - 1));
 
-  const entries = await prisma.entry.findMany({
-    where: {
-      createdAt: { gte: rangeStart },
-      OR: [
-        { type: "sent", unit: "bags" },
-        { type: "received", unit: "kg" },
-      ],
-    },
-    select: { type: true, unit: true, quantity: true, createdAt: true },
-  });
+  const { data, error } = await supabaseAdmin
+    .from("Entry")
+    .select("type, unit, quantity, createdAt")
+    .gte("createdAt", rangeStart.toISOString());
+
+  if (error) throw error;
+
+  const entries = (data ?? []).filter(
+    (e) => (e.type === "sent" && e.unit === "bags") || (e.type === "received" && e.unit === "kg"),
+  );
 
   const buckets = new Map<string, TrendPoint>();
   for (let i = 0; i < days; i++) {
@@ -25,7 +25,7 @@ export async function getTrendData(days = 7): Promise<TrendPoint[]> {
   }
 
   for (const e of entries) {
-    const key = format(startOfDay(e.createdAt), "yyyy-MM-dd");
+    const key = format(startOfDay(new Date(e.createdAt)), "yyyy-MM-dd");
     const bucket = buckets.get(key);
     if (!bucket) continue;
     if (e.type === "sent" && e.unit === "bags") bucket.bagsSent += e.quantity;

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { restoreFactoryStock } from "@/lib/factoryStock";
 import { getUser } from "@/lib/supabase/server";
 
@@ -30,24 +29,30 @@ export async function PATCH(
     );
   }
 
-  try {
-    const entry = await prisma.entry.update({
-      where: { id },
-      data: parsed.data,
-      include: { contact: true },
-    });
+  const { ratePerKg, note, createdAt } = parsed.data;
 
-    return NextResponse.json({ entry });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+  const { data: entry, error } = await supabaseAdmin
+    .from("Entry")
+    .update({
+      ...(ratePerKg !== undefined ? { ratePerKg } : {}),
+      ...(note !== undefined ? { note } : {}),
+      ...(createdAt ? { createdAt: createdAt.toISOString() } : {}),
+    })
+    .eq("id", id)
+    .select("*, contact:Contact(*)")
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") {
       return NextResponse.json(
         { error: "This entry no longer exists (it may have been deleted elsewhere)." },
         { status: 404 },
       );
     }
-    const message = err instanceof Error ? err.message : "Failed to update entry";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  return NextResponse.json({ entry });
 }
 
 export async function DELETE(
@@ -61,19 +66,17 @@ export async function DELETE(
   const { id } = await params;
 
   try {
-    await prisma.$transaction(async (tx) => {
-      const entry = await tx.entry.findUnique({ where: { id } });
-      if (!entry) return;
+    const { data: entry } = await supabaseAdmin.from("Entry").select("*").eq("id", id).maybeSingle();
 
+    if (entry) {
       if (entry.type === "sent" && entry.unit === "bags" && entry.yarnType) {
-        await restoreFactoryStock(tx, entry.yarnType, entry.quantity);
+        await restoreFactoryStock(entry.yarnType, entry.quantity);
       }
-
-      await tx.entry.delete({ where: { id } });
-    });
-
-    return NextResponse.json({ ok: true });
+      await supabaseAdmin.from("Entry").delete().eq("id", id);
+    }
   } catch {
-    return NextResponse.json({ ok: true });
+    // best-effort, matches previous swallow-all behavior
   }
+
+  return NextResponse.json({ ok: true });
 }

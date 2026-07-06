@@ -1,27 +1,33 @@
 import { getKpis } from "@/lib/kpis";
 import { getLedgerSummary } from "@/lib/ledger";
 import { getFactoryStockSummary } from "@/lib/factoryStock";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { Dashboard } from "@/components/Dashboard";
 import type { KpiCardData } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const [kpis, ledger, checklistItems, contacts, factoryStock] = await Promise.all([
+  const [kpis, ledger, checklistRes, contactsRes, factoryStock] = await Promise.all([
     getKpis(),
     getLedgerSummary(),
-    prisma.checklistItem.findMany({ orderBy: [{ done: "asc" }, { createdAt: "asc" }] }),
-    prisma.contact.findMany({ orderBy: { name: "asc" } }),
+    supabaseAdmin.from("ChecklistItem").select("*").order("done", { ascending: true }).order("createdAt", { ascending: true }),
+    supabaseAdmin.from("Contact").select("*").order("name", { ascending: true }),
     getFactoryStockSummary(),
   ]);
+
+  if (checklistRes.error) throw checklistRes.error;
+  if (contactsRes.error) throw contactsRes.error;
+
+  const checklistItems = checklistRes.data ?? [];
+  const contacts = contactsRes.data ?? [];
 
   const checklist = checklistItems.map((item) => ({
     id: item.id,
     task: item.task,
     meta: item.meta,
     done: item.done,
-    dueDate: item.dueDate ? item.dueDate.toISOString() : null,
+    dueDate: item.dueDate ?? null,
   }));
 
   const contactOptions = contacts.map((c) => ({

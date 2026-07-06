@@ -1,11 +1,28 @@
 import { startOfDay, subDays } from "date-fns";
-import { prisma } from "./prisma";
+import { supabaseAdmin } from "./supabase/admin";
 import type { KpiCardData } from "./types";
-import type { Prisma } from "@prisma/client";
 
-async function sumQuantity(where: Prisma.EntryWhereInput) {
-  const result = await prisma.entry.aggregate({ _sum: { quantity: true }, where });
-  return result._sum.quantity ?? 0;
+interface QuantityFilter {
+  type?: "sent" | "received";
+  unit?: "bags" | "kg";
+  createdAtGte?: string;
+  createdAtLt?: string;
+  contactIds?: string[];
+}
+
+async function sumQuantity(filter: QuantityFilter): Promise<number> {
+  if (filter.contactIds && filter.contactIds.length === 0) return 0;
+
+  let query = supabaseAdmin.from("Entry").select("quantity");
+  if (filter.type) query = query.eq("type", filter.type);
+  if (filter.unit) query = query.eq("unit", filter.unit);
+  if (filter.createdAtGte) query = query.gte("createdAt", filter.createdAtGte);
+  if (filter.createdAtLt) query = query.lt("createdAt", filter.createdAtLt);
+  if (filter.contactIds) query = query.in("contactId", filter.contactIds);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []).reduce((sum, row) => sum + row.quantity, 0);
 }
 
 function percentChange(current: number, previous: number): number | null {
@@ -16,11 +33,19 @@ function percentChange(current: number, previous: number): number | null {
   return ((current - previous) / Math.abs(previous)) * 100;
 }
 
-async function roleBalance(role: string, unit: string, before?: Date) {
-  const dateFilter: Prisma.DateTimeFilter | undefined = before ? { lt: before } : undefined;
+async function contactIdsForRole(role: string): Promise<string[]> {
+  const { data, error } = await supabaseAdmin.from("Contact").select("id").eq("role", role);
+  if (error) throw error;
+  return (data ?? []).map((c) => c.id);
+}
+
+async function roleBalance(role: string, unit: "bags" | "kg", before?: Date): Promise<number> {
+  const contactIds = await contactIdsForRole(role);
+  const dateFilter = before ? { createdAtLt: before.toISOString() } : {};
+
   const [sent, received] = await Promise.all([
-    sumQuantity({ type: "sent", unit, contact: { role }, ...(dateFilter ? { createdAt: dateFilter } : {}) }),
-    sumQuantity({ type: "received", unit, contact: { role }, ...(dateFilter ? { createdAt: dateFilter } : {}) }),
+    sumQuantity({ type: "sent", unit, contactIds, ...dateFilter }),
+    sumQuantity({ type: "received", unit, contactIds, ...dateFilter }),
   ]);
   return sent - received;
 }
@@ -40,10 +65,20 @@ export async function getKpis(): Promise<KpiCardData[]> {
     bagsPendingDyersNow,
     bagsPendingDyersYesterday,
   ] = await Promise.all([
-    sumQuantity({ type: "sent", unit: "bags", createdAt: { gte: todayStart } }),
-    sumQuantity({ type: "sent", unit: "bags", createdAt: { gte: yesterdayStart, lt: todayStart } }),
-    sumQuantity({ type: "received", unit: "kg", createdAt: { gte: todayStart } }),
-    sumQuantity({ type: "received", unit: "kg", createdAt: { gte: yesterdayStart, lt: todayStart } }),
+    sumQuantity({ type: "sent", unit: "bags", createdAtGte: todayStart.toISOString() }),
+    sumQuantity({
+      type: "sent",
+      unit: "bags",
+      createdAtGte: yesterdayStart.toISOString(),
+      createdAtLt: todayStart.toISOString(),
+    }),
+    sumQuantity({ type: "received", unit: "kg", createdAtGte: todayStart.toISOString() }),
+    sumQuantity({
+      type: "received",
+      unit: "kg",
+      createdAtGte: yesterdayStart.toISOString(),
+      createdAtLt: todayStart.toISOString(),
+    }),
     roleBalance("knitter", "kg"),
     roleBalance("knitter", "kg", todayStart),
     roleBalance("dyer", "bags"),

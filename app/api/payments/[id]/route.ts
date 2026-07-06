@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getUser } from "@/lib/supabase/server";
 
 const updatePaymentSchema = z.object({
@@ -30,48 +29,64 @@ export async function PATCH(
 
   const { amount, note } = parsed.data;
 
-  try {
-    const existing = await prisma.payment.findUnique({ where: { id } });
-    if (!existing) {
-      return NextResponse.json({ error: "This payment no longer exists." }, { status: 404 });
-    }
+  const { data: existing, error: existingError } = await supabaseAdmin
+    .from("Payment")
+    .select("contactId")
+    .eq("id", id)
+    .maybeSingle();
 
-    const [entries, charges, otherDebits] = await Promise.all([
-      prisma.entry.findMany({
-        where: { contactId: existing.contactId, type: "sent", ratePerKg: { not: null } },
-        select: { quantity: true, ratePerKg: true },
-      }),
-      prisma.charge.aggregate({ _sum: { amount: true }, where: { contactId: existing.contactId } }),
-      prisma.payment.aggregate({
-        _sum: { amount: true },
-        where: { contactId: existing.contactId, id: { not: id } },
-      }),
-    ]);
-
-    const totalCredits =
-      entries.reduce((sum, e) => sum + (e.ratePerKg ?? 0) * e.quantity, 0) + (charges._sum.amount ?? 0);
-    const balanceExcludingThis = totalCredits - (otherDebits._sum.amount ?? 0);
-
-    if (amount > balanceExcludingThis + 0.01) {
-      return NextResponse.json(
-        { error: `Amount exceeds the outstanding balance (${balanceExcludingThis.toFixed(2)})` },
-        { status: 400 },
-      );
-    }
-
-    const payment = await prisma.payment.update({
-      where: { id },
-      data: { amount, note: note || null },
-    });
-
-    return NextResponse.json({ payment });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
-      return NextResponse.json({ error: "This payment no longer exists." }, { status: 404 });
-    }
-    const message = err instanceof Error ? err.message : "Failed to update payment";
-    return NextResponse.json({ error: message }, { status: 500 });
+  if (existingError) {
+    return NextResponse.json({ error: existingError.message }, { status: 500 });
   }
+  if (!existing) {
+    return NextResponse.json({ error: "This payment no longer exists." }, { status: 404 });
+  }
+
+  const [entriesRes, chargesRes, otherPaymentsRes] = await Promise.all([
+    supabaseAdmin
+      .from("Entry")
+      .select("quantity, ratePerKg")
+      .eq("contactId", existing.contactId)
+      .eq("type", "sent")
+      .not("ratePerKg", "is", null),
+    supabaseAdmin.from("Charge").select("amount").eq("contactId", existing.contactId),
+    supabaseAdmin.from("Payment").select("amount").eq("contactId", existing.contactId).neq("id", id),
+  ]);
+
+  if (entriesRes.error) return NextResponse.json({ error: entriesRes.error.message }, { status: 500 });
+  if (chargesRes.error) return NextResponse.json({ error: chargesRes.error.message }, { status: 500 });
+  if (otherPaymentsRes.error)
+    return NextResponse.json({ error: otherPaymentsRes.error.message }, { status: 500 });
+
+  const entryTotal = (entriesRes.data ?? []).reduce((sum, e) => sum + (e.ratePerKg ?? 0) * e.quantity, 0);
+  const chargeTotal = (chargesRes.data ?? []).reduce((sum, c) => sum + c.amount, 0);
+  const otherPaymentsTotal = (otherPaymentsRes.data ?? []).reduce((sum, p) => sum + p.amount, 0);
+
+  const totalCredits = entryTotal + chargeTotal;
+  const balanceExcludingThis = totalCredits - otherPaymentsTotal;
+
+  if (amount > balanceExcludingThis + 0.01) {
+    return NextResponse.json(
+      { error: `Amount exceeds the outstanding balance (${balanceExcludingThis.toFixed(2)})` },
+      { status: 400 },
+    );
+  }
+
+  const { data: payment, error } = await supabaseAdmin
+    .from("Payment")
+    .update({ amount, note: note || null })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") {
+      return NextResponse.json({ error: "This payment no longer exists." }, { status: 404 });
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ payment });
 }
 
 export async function DELETE(
@@ -83,6 +98,6 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  await prisma.payment.delete({ where: { id } }).catch(() => null);
+  await supabaseAdmin.from("Payment").delete().eq("id", id);
   return NextResponse.json({ ok: true });
 }

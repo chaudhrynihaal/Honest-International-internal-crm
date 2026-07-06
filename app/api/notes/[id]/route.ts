@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getUser } from "@/lib/supabase/server";
 
 const updateNoteSchema = z.object({
@@ -27,19 +26,21 @@ export async function PATCH(
     );
   }
 
-  try {
-    const note = await prisma.note.update({
-      where: { id },
-      data: { content: parsed.data.content },
-    });
-    return NextResponse.json({ note });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+  const { data: note, error } = await supabaseAdmin
+    .from("Note")
+    .update({ content: parsed.data.content, updatedAt: new Date().toISOString() })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") {
       return NextResponse.json({ error: "This note no longer exists." }, { status: 404 });
     }
-    const message = err instanceof Error ? err.message : "Failed to update note";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  return NextResponse.json({ note });
 }
 
 export async function DELETE(
@@ -51,6 +52,6 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  await prisma.note.delete({ where: { id } }).catch(() => null);
+  await supabaseAdmin.from("Note").delete().eq("id", id);
   return NextResponse.json({ ok: true });
 }

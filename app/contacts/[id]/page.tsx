@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getContactBalance } from "@/lib/ledger";
 import { getFactoryStockSummary } from "@/lib/factoryStock";
 import { formatPKR } from "@/lib/currency";
@@ -11,8 +11,8 @@ export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 10;
 
-function formatDate(d: Date) {
-  return d.toLocaleString(undefined, {
+function formatDate(d: string) {
+  return new Date(d).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -31,20 +31,30 @@ export default async function ContactDetailPage({
   const { id } = await params;
   const { page: pageParam } = await searchParams;
   const page = Math.max(1, Number(pageParam ?? "1") || 1);
+  const from = (page - 1) * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
 
-  const [contact, balance, allContacts, factoryStock, total, entries] = await Promise.all([
-    prisma.contact.findUnique({ where: { id } }),
+  const [contactRes, balance, allContactsRes, factoryStock, entriesRes] = await Promise.all([
+    supabaseAdmin.from("Contact").select("*").eq("id", id).maybeSingle(),
     getContactBalance(id),
-    prisma.contact.findMany({ orderBy: { name: "asc" } }),
+    supabaseAdmin.from("Contact").select("*").order("name", { ascending: true }),
     getFactoryStockSummary(),
-    prisma.entry.count({ where: { contactId: id } }),
-    prisma.entry.findMany({
-      where: { contactId: id },
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-    }),
+    supabaseAdmin
+      .from("Entry")
+      .select("*", { count: "exact" })
+      .eq("contactId", id)
+      .order("createdAt", { ascending: false })
+      .range(from, to),
   ]);
+
+  if (contactRes.error) throw contactRes.error;
+  if (allContactsRes.error) throw allContactsRes.error;
+  if (entriesRes.error) throw entriesRes.error;
+
+  const contact = contactRes.data;
+  const allContacts = allContactsRes.data ?? [];
+  const entries = entriesRes.data ?? [];
+  const total = entriesRes.count ?? 0;
 
   if (!contact) notFound();
 

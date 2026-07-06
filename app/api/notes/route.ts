@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { newId } from "@/lib/id";
 import { getUser } from "@/lib/supabase/server";
 
 const createNoteSchema = z.object({
@@ -12,7 +13,15 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const notes = await prisma.note.findMany({ orderBy: { createdAt: "desc" } });
+  const { data: notes, error } = await supabaseAdmin
+    .from("Note")
+    .select("*")
+    .order("createdAt", { ascending: false });
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
   return NextResponse.json({ notes });
 }
 
@@ -31,6 +40,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const note = await prisma.note.create({ data: { content: parsed.data.content } });
+  const now = new Date().toISOString();
+  const { data: note, error } = await supabaseAdmin
+    .from("Note")
+    .insert({ id: newId(), content: parsed.data.content, updatedAt: now })
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
   return NextResponse.json({ note }, { status: 201 });
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { newId } from "@/lib/id";
 import { getUser } from "@/lib/supabase/server";
 
 const createSchema = z.object({
@@ -22,9 +23,16 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const items = await prisma.checklistItem.findMany({
-    orderBy: [{ done: "asc" }, { createdAt: "asc" }],
-  });
+  const { data: items, error } = await supabaseAdmin
+    .from("ChecklistItem")
+    .select("*")
+    .order("done", { ascending: true })
+    .order("createdAt", { ascending: true });
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
   return NextResponse.json({ items });
 }
 
@@ -44,9 +52,21 @@ export async function POST(request: Request) {
   }
 
   const { task, meta, dueDate } = parsed.data;
-  const item = await prisma.checklistItem.create({
-    data: { task, meta: meta || null, dueDate: dueDate || null },
-  });
+
+  const { data: item, error } = await supabaseAdmin
+    .from("ChecklistItem")
+    .insert({
+      id: newId(),
+      task,
+      meta: meta || null,
+      dueDate: dueDate ? dueDate.toISOString() : null,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   return NextResponse.json({ item }, { status: 201 });
 }
@@ -66,12 +86,23 @@ export async function PATCH(request: Request) {
     );
   }
 
-  const { id, ...rest } = parsed.data;
+  const { id, done, task, meta, dueDate } = parsed.data;
 
-  const item = await prisma.checklistItem.update({
-    where: { id },
-    data: rest,
-  });
+  const { data: item, error } = await supabaseAdmin
+    .from("ChecklistItem")
+    .update({
+      ...(done !== undefined ? { done } : {}),
+      ...(task !== undefined ? { task } : {}),
+      ...(meta !== undefined ? { meta: meta || null } : {}),
+      ...(dueDate !== undefined ? { dueDate: dueDate ? dueDate.toISOString() : null } : {}),
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   return NextResponse.json({ item });
 }

@@ -2,7 +2,8 @@
 
 A stock & ledger tracking app for a yarn business that sends bags out for knitting
 and dyeing, then tracks what comes back. Built with Next.js (App Router), TypeScript,
-Prisma + Supabase Postgres, and Tailwind CSS.
+Supabase Postgres (accessed directly via `@supabase/supabase-js`, no ORM), and
+Tailwind CSS.
 
 ## Features
 
@@ -20,8 +21,9 @@ Prisma + Supabase Postgres, and Tailwind CSS.
 
 ## Tech Stack
 
-- Next.js 14+ (App Router) + TypeScript
-- Supabase Postgres via Prisma ORM
+- Next.js 16+ (App Router) + TypeScript
+- Supabase Postgres, queried directly via `@supabase/supabase-js` (server-side only,
+  service-role key — no Prisma/ORM, no direct TCP Postgres connection)
 - Supabase Auth (email + password)
 - Tailwind CSS
 - Recharts
@@ -40,44 +42,54 @@ checks the session itself and returns 401 if there isn't one.
   client for Server Components/Route Handlers, `lib/supabase/proxy.ts` — the
   session-refresh logic used by `proxy.ts`.
 
+## Database access
+
+All server-side data access (API routes, Server Components) goes through
+`lib/supabase/admin.ts`, a `@supabase/supabase-js` client authenticated with the
+**service role key** (bypasses Row Level Security — access control is enforced by
+this app's own `getUser()` checks, not by RLS policies). This talks to Supabase over
+its HTTPS REST API (PostgREST), not a raw Postgres TCP connection, so it works from
+any hosting platform regardless of IPv4/IPv6 egress support.
+
+- `NEXT_PUBLIC_SUPABASE_URL` — same value used for Auth.
+- `SUPABASE_SERVICE_ROLE_KEY` — **secret**, server-only. Supabase dashboard →
+  Project Settings → API → "service_role" key. Never prefix this with
+  `NEXT_PUBLIC_` or reference it from a Client Component.
+
+Tables (`Contact`, `Entry`, `Payment`, `Charge`, `FactoryStock`, `ChecklistItem`,
+`Note`) already exist in the Supabase Postgres database. There's no migration
+tooling in this repo anymore — schema changes are made directly via the Supabase
+SQL Editor or Table Editor.
+
+Row IDs are generated in application code (`lib/id.ts`, `crypto.randomUUID()`) on
+insert, since the database columns have no default value generator.
+
+**Known limitation:** a few mutations that used to run inside a single Prisma
+transaction (e.g. deleting a contact/entry also restores factory stock; creating an
+entry can also create a new contact and deduct stock) are now sequential API calls
+rather than one atomic transaction. This is very unlikely to matter for this app's
+scale, but a failure partway through one of these operations could in theory leave
+data partially updated.
+
 ## Getting Started
 
 ```bash
 npm install
-npx prisma migrate dev
-npx prisma db seed
 npm run dev
 ```
 
 Then open [http://localhost:3000](http://localhost:3000).
 
-- `npm install` — install dependencies.
-- `npx prisma migrate dev` — apply the schema to your Supabase Postgres database.
-  (Prisma will also run `prisma generate` automatically.)
-- `npx prisma db seed` — populate the database with a handful of realistic knitters
-  and dyers and a week of sample entries, so the dashboard isn't empty on first run.
-- `npm run dev` — start the dev server.
-
-The database is a Supabase Postgres project, configured via `DATABASE_URL` in
-`.env` (see Project Settings → Database → Connection string in the Supabase
-dashboard). See the Authentication section above for the auth-related env vars.
-
-### Resetting the database
-
-To wipe and reseed at any point:
-
-```bash
-npx prisma migrate reset
-```
-
 ## Project Structure
 
-- `prisma/schema.prisma` — data model (`Contact`, `Entry`, `ChecklistItem`).
-- `prisma/seed.ts` — seed script.
-- `lib/` — Prisma client singleton and server-side aggregation helpers (KPIs, trend
-  chart data, ledger summary).
-- `app/api/` — route handlers for contacts, entries, checklist items, and the KPI
-  aggregation endpoint.
-- `app/page.tsx` — dashboard (server component, fetches data via Prisma directly).
+- `lib/supabase/admin.ts` — service-role Supabase client used by all server-side
+  data access.
+- `lib/id.ts` — row ID generation for inserts.
+- `lib/` — server-side data access and aggregation helpers (ledger, KPIs, trend
+  chart data, factory stock).
+- `app/api/` — route handlers for contacts, entries, payments, charges, factory
+  stock, checklist items, notes, and the KPI aggregation endpoint.
+- `app/page.tsx` — dashboard (server component).
 - `app/contacts/[id]/page.tsx` — contact detail view.
-- `components/` — dashboard widgets, the Log Entry modal, and the sidebar shell.
+- `components/` — dashboard widgets, ledger T-account cards, modals, and the
+  sidebar shell.

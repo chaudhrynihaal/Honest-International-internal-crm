@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { newId } from "@/lib/id";
 import { getUser } from "@/lib/supabase/server";
 
 const createContactSchema = z.object({
@@ -14,9 +15,15 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const contacts = await prisma.contact.findMany({
-    orderBy: { name: "asc" },
-  });
+  const { data: contacts, error } = await supabaseAdmin
+    .from("Contact")
+    .select("*")
+    .order("name", { ascending: true });
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
   return NextResponse.json({ contacts });
 }
 
@@ -36,9 +43,16 @@ export async function POST(request: Request) {
   }
 
   const { name, role, phone } = parsed.data;
-  const contact = await prisma.contact.create({
-    data: { name, role, phone: phone || null },
-  });
+
+  const { data: contact, error } = await supabaseAdmin
+    .from("Contact")
+    .insert({ id: newId(), name, role, phone: phone || null })
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   return NextResponse.json({ contact }, { status: 201 });
 }

@@ -1,19 +1,51 @@
-import { prisma } from "./prisma";
+import { supabaseAdmin } from "./supabase/admin";
 import type { LedgerRow } from "./types";
 
+interface EntryRow {
+  id: string;
+  type: string;
+  unit: string;
+  quantity: number;
+  yarnType: string | null;
+  ratePerKg: number | null;
+  note: string | null;
+  createdAt: string;
+}
+
+interface ChargeRow {
+  id: string;
+  amount: number;
+  note: string | null;
+  createdAt: string;
+}
+
+interface PaymentRow {
+  id: string;
+  amount: number;
+  note: string | null;
+  createdAt: string;
+}
+
 export async function getLedgerSummary(): Promise<LedgerRow[]> {
-  const contacts = await prisma.contact.findMany({
-    include: {
-      entries: { select: { type: true, unit: true, quantity: true, createdAt: true } },
-    },
-  });
+  const { data, error } = await supabaseAdmin
+    .from("Contact")
+    .select("id, name, role, entries:Entry(type, unit, quantity, createdAt)");
+
+  if (error) throw error;
+
+  const contacts = (data ?? []) as unknown as Array<{
+    id: string;
+    name: string;
+    role: string;
+    entries: Array<{ type: string; unit: string; quantity: number; createdAt: string }>;
+  }>;
 
   return contacts.map((c) => {
     let totalSentBags = 0;
     let totalReceivedBags = 0;
     let totalSentKg = 0;
     let totalReceivedKg = 0;
-    let lastEntryAt: Date | null = null;
+    let lastEntryAt: string | null = null;
 
     for (const e of c.entries) {
       if (e.unit === "bags") {
@@ -36,23 +68,33 @@ export async function getLedgerSummary(): Promise<LedgerRow[]> {
       totalReceivedKg,
       balanceBags: totalSentBags - totalReceivedBags,
       balanceKg: totalSentKg - totalReceivedKg,
-      lastEntryAt: lastEntryAt ? lastEntryAt.toISOString() : null,
+      lastEntryAt,
     };
   });
 }
 
 export async function getContactBalance(contactId: string) {
-  const [sentBags, receivedBags, sentKg, receivedKg] = await Promise.all([
-    prisma.entry.aggregate({ _sum: { quantity: true }, where: { contactId, type: "sent", unit: "bags" } }),
-    prisma.entry.aggregate({ _sum: { quantity: true }, where: { contactId, type: "received", unit: "bags" } }),
-    prisma.entry.aggregate({ _sum: { quantity: true }, where: { contactId, type: "sent", unit: "kg" } }),
-    prisma.entry.aggregate({ _sum: { quantity: true }, where: { contactId, type: "received", unit: "kg" } }),
-  ]);
+  const { data, error } = await supabaseAdmin
+    .from("Entry")
+    .select("type, unit, quantity")
+    .eq("contactId", contactId);
 
-  const totalSentBags = sentBags._sum.quantity ?? 0;
-  const totalReceivedBags = receivedBags._sum.quantity ?? 0;
-  const totalSentKg = sentKg._sum.quantity ?? 0;
-  const totalReceivedKg = receivedKg._sum.quantity ?? 0;
+  if (error) throw error;
+
+  let totalSentBags = 0;
+  let totalReceivedBags = 0;
+  let totalSentKg = 0;
+  let totalReceivedKg = 0;
+
+  for (const e of data ?? []) {
+    if (e.unit === "bags") {
+      if (e.type === "sent") totalSentBags += e.quantity;
+      else totalReceivedBags += e.quantity;
+    } else {
+      if (e.type === "sent") totalSentKg += e.quantity;
+      else totalReceivedKg += e.quantity;
+    }
+  }
 
   return {
     totalSentBags,
@@ -97,61 +139,71 @@ export interface ContactTAccount {
 }
 
 export async function getContactTAccounts(): Promise<ContactTAccount[]> {
-  const contacts = await prisma.contact.findMany({
-    where: { role: { in: ["knitter", "dyer"] } },
-    include: {
-      entries: {
-        where: { type: "sent", ratePerKg: { not: null } },
-        orderBy: { createdAt: "asc" },
-      },
-      charges: {
-        orderBy: { createdAt: "asc" },
-      },
-      payments: {
-        orderBy: { createdAt: "asc" },
-      },
-    },
-    orderBy: { name: "asc" },
-  });
+  const { data, error } = await supabaseAdmin
+    .from("Contact")
+    .select(
+      "id, name, role, note, entries:Entry(id, type, unit, quantity, yarnType, ratePerKg, note, createdAt), charges:Charge(id, amount, note, createdAt), payments:Payment(id, amount, note, createdAt)",
+    )
+    .in("role", ["knitter", "dyer"])
+    .order("name", { ascending: true });
+
+  if (error) throw error;
+
+  const contacts = (data ?? []) as unknown as Array<{
+    id: string;
+    name: string;
+    role: string;
+    note: string | null;
+    entries: EntryRow[];
+    charges: ChargeRow[];
+    payments: PaymentRow[];
+  }>;
 
   return contacts.map((c) => {
-    const entryCredits: CreditLine[] = c.entries.map((e) => ({
-      id: e.id,
-      source: "entry",
-      date: e.createdAt.toISOString(),
-      description: `${e.quantity.toLocaleString()} ${e.unit}${e.yarnType ? ` · ${e.yarnType}` : ""}`,
-      amount: (e.ratePerKg ?? 0) * e.quantity,
-      quantity: e.quantity,
-      unit: e.unit,
-      yarnType: e.yarnType,
-      ratePerKg: e.ratePerKg ?? 0,
-      note: e.note,
-    }));
+    const entryCredits: CreditLine[] = c.entries
+      .filter((e) => e.type === "sent" && e.ratePerKg !== null)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((e) => ({
+        id: e.id,
+        source: "entry",
+        date: e.createdAt,
+        description: `${e.quantity.toLocaleString()} ${e.unit}${e.yarnType ? ` · ${e.yarnType}` : ""}`,
+        amount: (e.ratePerKg ?? 0) * e.quantity,
+        quantity: e.quantity,
+        unit: e.unit,
+        yarnType: e.yarnType,
+        ratePerKg: e.ratePerKg ?? 0,
+        note: e.note,
+      }));
 
-    const chargeCredits: CreditLine[] = c.charges.map((ch) => ({
-      id: ch.id,
-      source: "charge",
-      date: ch.createdAt.toISOString(),
-      description: ch.note || "Manual charge",
-      amount: ch.amount,
-      quantity: null,
-      unit: null,
-      yarnType: null,
-      ratePerKg: null,
-      note: ch.note,
-    }));
+    const chargeCredits: CreditLine[] = [...c.charges]
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((ch) => ({
+        id: ch.id,
+        source: "charge",
+        date: ch.createdAt,
+        description: ch.note || "Manual charge",
+        amount: ch.amount,
+        quantity: null,
+        unit: null,
+        yarnType: null,
+        ratePerKg: null,
+        note: ch.note,
+      }));
 
     const credits = [...entryCredits, ...chargeCredits].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
     );
 
-    const debits: DebitLine[] = c.payments.map((p) => ({
-      id: p.id,
-      date: p.createdAt.toISOString(),
-      description: p.note || "Payment",
-      amount: p.amount,
-      note: p.note,
-    }));
+    const debits: DebitLine[] = [...c.payments]
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((p) => ({
+        id: p.id,
+        date: p.createdAt,
+        description: p.note || "Payment",
+        amount: p.amount,
+        note: p.note,
+      }));
 
     const totalCredits = credits.reduce((sum, l) => sum + l.amount, 0);
     const totalDebits = debits.reduce((sum, l) => sum + l.amount, 0);

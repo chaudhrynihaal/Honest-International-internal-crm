@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { newId } from "@/lib/id";
 import { deductFactoryStock, InsufficientStockError } from "@/lib/factoryStock";
 import { getUser } from "@/lib/supabase/server";
 
@@ -39,21 +40,24 @@ export async function GET(request: Request) {
   const contactId = searchParams.get("contactId") ?? undefined;
   const page = Math.max(1, Number(searchParams.get("page") ?? "1"));
   const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "10")));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
 
-  const where = contactId ? { contactId } : {};
+  let query = supabaseAdmin
+    .from("Entry")
+    .select("*, contact:Contact(*)", { count: "exact" })
+    .order("createdAt", { ascending: false })
+    .range(from, to);
 
-  const [entries, total] = await Promise.all([
-    prisma.entry.findMany({
-      where,
-      include: { contact: true },
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    }),
-    prisma.entry.count({ where }),
-  ]);
+  if (contactId) query = query.eq("contactId", contactId);
 
-  return NextResponse.json({ entries, total, page, pageSize });
+  const { data: entries, count, error } = await query;
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ entries, total: count ?? 0, page, pageSize });
 }
 
 export async function POST(request: Request) {
@@ -74,38 +78,42 @@ export async function POST(request: Request) {
   const { type, unit, quantity, note, createdAt, yarnType, ratePerKg, contactId, newContact } = parsed.data;
 
   try {
-    const entry = await prisma.$transaction(async (tx) => {
-      let resolvedContactId = contactId;
+    let resolvedContactId = contactId;
 
-      if (!resolvedContactId && newContact) {
-        const contact = await tx.contact.create({
-          data: { name: newContact.name, role: newContact.role },
-        });
-        resolvedContactId = contact.id;
-      }
+    if (!resolvedContactId && newContact) {
+      const { data: contact, error: contactError } = await supabaseAdmin
+        .from("Contact")
+        .insert({ id: newId(), name: newContact.name, role: newContact.role })
+        .select()
+        .single();
+      if (contactError) throw contactError;
+      resolvedContactId = contact.id;
+    }
 
-      if (!resolvedContactId) {
-        throw new Error("A contact is required");
-      }
+    if (!resolvedContactId) {
+      throw new Error("A contact is required");
+    }
 
-      if (type === "sent" && unit === "bags" && yarnType) {
-        await deductFactoryStock(tx, yarnType, quantity);
-      }
+    if (type === "sent" && unit === "bags" && yarnType) {
+      await deductFactoryStock(yarnType, quantity);
+    }
 
-      return tx.entry.create({
-        data: {
-          contactId: resolvedContactId,
-          type,
-          unit,
-          quantity,
-          yarnType: yarnType || null,
-          ratePerKg: ratePerKg ?? null,
-          note: note || null,
-          ...(createdAt ? { createdAt } : {}),
-        },
-        include: { contact: true },
-      });
-    });
+    const { data: entry, error: entryError } = await supabaseAdmin
+      .from("Entry")
+      .insert({
+        id: newId(),
+        contactId: resolvedContactId,
+        type,
+        unit,
+        quantity,
+        yarnType: yarnType || null,
+        ratePerKg: ratePerKg ?? null,
+        note: note || null,
+        ...(createdAt ? { createdAt: createdAt.toISOString() } : {}),
+      })
+      .select("*, contact:Contact(*)")
+      .single();
+    if (entryError) throw entryError;
 
     return NextResponse.json({ entry }, { status: 201 });
   } catch (err) {
@@ -115,6 +123,7 @@ export async function POST(request: Request) {
     if (err instanceof Error && err.message === "A contact is required") {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
-    throw err;
+    const message = err instanceof Error ? err.message : "Failed to create entry";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

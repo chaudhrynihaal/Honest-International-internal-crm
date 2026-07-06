@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getUser } from "@/lib/supabase/server";
 
 const updateChargeSchema = z.object({
@@ -31,20 +30,25 @@ export async function PATCH(
 
   const { amount, note, createdAt } = parsed.data;
 
-  try {
-    const charge = await prisma.charge.update({
-      where: { id },
-      data: { amount, note: note || null, ...(createdAt ? { createdAt } : {}) },
-    });
+  const { data: charge, error } = await supabaseAdmin
+    .from("Charge")
+    .update({
+      amount,
+      note: note || null,
+      ...(createdAt ? { createdAt: createdAt.toISOString() } : {}),
+    })
+    .eq("id", id)
+    .select()
+    .single();
 
-    return NextResponse.json({ charge });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+  if (error) {
+    if (error.code === "PGRST116") {
       return NextResponse.json({ error: "This charge no longer exists." }, { status: 404 });
     }
-    const message = err instanceof Error ? err.message : "Failed to update charge";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  return NextResponse.json({ charge });
 }
 
 export async function DELETE(
@@ -56,6 +60,6 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  await prisma.charge.delete({ where: { id } }).catch(() => null);
+  await supabaseAdmin.from("Charge").delete().eq("id", id);
   return NextResponse.json({ ok: true });
 }

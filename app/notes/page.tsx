@@ -1,16 +1,21 @@
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { NotesClient } from "@/components/NotesClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function NotesPage() {
-  const notesRaw = await prisma.note.findMany({ orderBy: { createdAt: "desc" } });
+  const { data, error } = await supabaseAdmin
+    .from("Note")
+    .select("*")
+    .order("createdAt", { ascending: false });
 
-  const notes = notesRaw.map((n) => ({
+  if (error) throw error;
+
+  const notes = (data ?? []).map((n) => ({
     id: n.id,
     content: n.content,
-    createdAt: n.createdAt.toISOString(),
-    updatedAt: n.updatedAt.toISOString(),
+    createdAt: n.createdAt,
+    updatedAt: n.updatedAt,
   }));
 
   return <NotesClient notes={notes} />;

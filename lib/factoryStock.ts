@@ -1,18 +1,25 @@
-import { prisma } from "./prisma";
-import type { Prisma } from "@prisma/client";
-import type { FactoryStockSummaryRow } from "./types";
+import { supabaseAdmin } from "./supabase/admin";
+import { newId } from "./id";
+import type { FactoryStockLot, FactoryStockSummaryRow } from "./types";
 
-export async function getFactoryStockLots() {
-  return prisma.factoryStock.findMany({
-    orderBy: [{ yarnType: "asc" }, { boughtAt: "asc" }],
-  });
+export async function getFactoryStockLots(): Promise<FactoryStockLot[]> {
+  const { data, error } = await supabaseAdmin
+    .from("FactoryStock")
+    .select("*")
+    .order("yarnType", { ascending: true })
+    .order("boughtAt", { ascending: true });
+
+  if (error) throw error;
+  return data ?? [];
 }
 
 export async function getFactoryStockSummary(): Promise<FactoryStockSummaryRow[]> {
-  const lots = await prisma.factoryStock.findMany();
+  const { data, error } = await supabaseAdmin.from("FactoryStock").select("yarnType, bags");
+  if (error) throw error;
+
   const map = new Map<string, FactoryStockSummaryRow>();
 
-  for (const lot of lots) {
+  for (const lot of data ?? []) {
     const existing = map.get(lot.yarnType);
     if (existing) {
       existing.totalBags += lot.bags;
@@ -34,51 +41,57 @@ export class InsufficientStockError extends Error {
   }
 }
 
-export async function deductFactoryStock(
-  tx: Prisma.TransactionClient,
-  yarnType: string,
-  quantity: number,
-) {
-  const lots = await tx.factoryStock.findMany({
-    where: { yarnType, bags: { gt: 0 } },
-    orderBy: { boughtAt: "asc" },
-  });
+// Note: unlike the previous Prisma $transaction-based version, this deducts
+// across lots via sequential updates (not a single atomic transaction).
+export async function deductFactoryStock(yarnType: string, quantity: number) {
+  const { data: lots, error } = await supabaseAdmin
+    .from("FactoryStock")
+    .select("id, bags")
+    .eq("yarnType", yarnType)
+    .gt("bags", 0)
+    .order("boughtAt", { ascending: true });
 
-  const available = lots.reduce((sum, lot) => sum + lot.bags, 0);
+  if (error) throw error;
+
+  const available = (lots ?? []).reduce((sum, lot) => sum + lot.bags, 0);
   if (available < quantity) {
     throw new InsufficientStockError(yarnType, available, quantity);
   }
 
   let remaining = quantity;
-  for (const lot of lots) {
+  for (const lot of lots ?? []) {
     if (remaining <= 0) break;
     const take = Math.min(lot.bags, remaining);
-    await tx.factoryStock.update({
-      where: { id: lot.id },
-      data: { bags: lot.bags - take },
-    });
+    const { error: updateError } = await supabaseAdmin
+      .from("FactoryStock")
+      .update({ bags: lot.bags - take })
+      .eq("id", lot.id);
+    if (updateError) throw updateError;
     remaining -= take;
   }
 }
 
-export async function restoreFactoryStock(
-  tx: Prisma.TransactionClient,
-  yarnType: string,
-  quantity: number,
-) {
-  const lot = await tx.factoryStock.findFirst({
-    where: { yarnType },
-    orderBy: { boughtAt: "desc" },
-  });
+export async function restoreFactoryStock(yarnType: string, quantity: number) {
+  const { data: lot, error } = await supabaseAdmin
+    .from("FactoryStock")
+    .select("id, bags")
+    .eq("yarnType", yarnType)
+    .order("boughtAt", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
 
   if (lot) {
-    await tx.factoryStock.update({
-      where: { id: lot.id },
-      data: { bags: lot.bags + quantity },
-    });
+    const { error: updateError } = await supabaseAdmin
+      .from("FactoryStock")
+      .update({ bags: lot.bags + quantity })
+      .eq("id", lot.id);
+    if (updateError) throw updateError;
   } else {
-    await tx.factoryStock.create({
-      data: { yarnType, bags: quantity, rate: 0 },
-    });
+    const { error: insertError } = await supabaseAdmin
+      .from("FactoryStock")
+      .insert({ id: newId(), yarnType, bags: quantity, rate: 0 });
+    if (insertError) throw insertError;
   }
 }

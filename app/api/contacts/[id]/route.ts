@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { restoreFactoryStock } from "@/lib/factoryStock";
 import { getUser } from "@/lib/supabase/server";
 
@@ -33,25 +32,26 @@ export async function PATCH(
 
   const { name, role, phone, note } = parsed.data;
 
-  try {
-    const contact = await prisma.contact.update({
-      where: { id },
-      data: {
-        ...(name !== undefined ? { name } : {}),
-        ...(role !== undefined ? { role } : {}),
-        ...(phone !== undefined ? { phone: phone || null } : {}),
-        ...(note !== undefined ? { note: note || null } : {}),
-      },
-    });
+  const { data: contact, error } = await supabaseAdmin
+    .from("Contact")
+    .update({
+      ...(name !== undefined ? { name } : {}),
+      ...(role !== undefined ? { role } : {}),
+      ...(phone !== undefined ? { phone: phone || null } : {}),
+      ...(note !== undefined ? { note: note || null } : {}),
+    })
+    .eq("id", id)
+    .select()
+    .single();
 
-    return NextResponse.json({ contact });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+  if (error) {
+    if (error.code === "PGRST116") {
       return NextResponse.json({ error: "This contact no longer exists." }, { status: 404 });
     }
-    const message = err instanceof Error ? err.message : "Failed to update contact";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  return NextResponse.json({ contact });
 }
 
 export async function DELETE(
@@ -64,19 +64,24 @@ export async function DELETE(
 
   const { id } = await params;
 
-  await prisma
-    .$transaction(async (tx) => {
-      const stockAffectingEntries = await tx.entry.findMany({
-        where: { contactId: id, type: "sent", unit: "bags", yarnType: { not: null } },
-      });
+  try {
+    const { data: stockAffectingEntries } = await supabaseAdmin
+      .from("Entry")
+      .select("yarnType, quantity")
+      .eq("contactId", id)
+      .eq("type", "sent")
+      .eq("unit", "bags")
+      .not("yarnType", "is", null);
 
-      for (const entry of stockAffectingEntries) {
-        await restoreFactoryStock(tx, entry.yarnType!, entry.quantity);
-      }
+    for (const entry of stockAffectingEntries ?? []) {
+      await restoreFactoryStock(entry.yarnType!, entry.quantity);
+    }
 
-      await tx.contact.delete({ where: { id } });
-    })
-    .catch(() => null);
+    // Entry/Payment/Charge rows cascade-delete via the DB foreign keys.
+    await supabaseAdmin.from("Contact").delete().eq("id", id);
+  } catch {
+    // best-effort, matches previous swallow-all behavior
+  }
 
   return NextResponse.json({ ok: true });
 }
