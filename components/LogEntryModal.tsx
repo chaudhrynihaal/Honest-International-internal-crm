@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { formatPKR } from "@/lib/currency";
 import type { FactoryStockSummaryRow } from "@/lib/types";
+import type { YarnTypeSentSummary } from "@/lib/ledger";
 
 export interface ContactOption {
   id: string;
@@ -44,14 +45,53 @@ export function LogEntryModal({
   const [date, setDate] = useState(() => toDatetimeLocal(new Date()));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [yarnBreakdown, setYarnBreakdown] = useState<YarnTypeSentSummary[]>([]);
+  const [loadingBreakdown, setLoadingBreakdown] = useState(false);
 
   const requiresYarnType = type === "sent" && unit === "bags";
+  const showReceivedYarnType = type === "received" && contactMode === "existing" && !!contactId;
   const showRateField = type === "sent";
   const availableStock = factoryStock.filter((s) => s.totalBags > 0);
+  const knitters = contacts.filter((c) => c.role === "knitter");
+  const dyers = contacts.filter((c) => c.role === "dyer");
 
   const qtyNum = Number(quantity);
   const rateNum = Number(ratePerKg);
   const totalBill = qtyNum > 0 && rateNum > 0 ? qtyNum * rateNum : null;
+
+  useEffect(() => {
+    if (!showReceivedYarnType) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoadingBreakdown(true);
+    fetch(`/api/contacts/${contactId}/yarn-summary`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) setYarnBreakdown(data.breakdown ?? []);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingBreakdown(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contactId, type, contactMode]);
+
+  function handleContactModeChange(mode: "existing" | "new") {
+    setContactMode(mode);
+    setYarnType("");
+  }
+
+  function handleContactChange(id: string) {
+    setContactId(id);
+    setYarnType("");
+  }
+
+  function handleTypeChange(value: "sent" | "received") {
+    setType(value);
+    setYarnType("");
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -84,7 +124,7 @@ export function LogEntryModal({
         note: note.trim() || undefined,
         createdAt: new Date(date).toISOString(),
       };
-      if (requiresYarnType) {
+      if (yarnType) {
         payload.yarnType = yarnType;
       }
       if (showRateField && rateNum > 0) {
@@ -135,7 +175,7 @@ export function LogEntryModal({
             <div className="mb-2 flex gap-2">
               <button
                 type="button"
-                onClick={() => setContactMode("existing")}
+                onClick={() => handleContactModeChange("existing")}
                 className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
                   contactMode === "existing" ? "bg-primary text-white" : "bg-black/5 text-foreground/60"
                 }`}
@@ -144,7 +184,7 @@ export function LogEntryModal({
               </button>
               <button
                 type="button"
-                onClick={() => setContactMode("new")}
+                onClick={() => handleContactModeChange("new")}
                 className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
                   contactMode === "new" ? "bg-primary text-white" : "bg-black/5 text-foreground/60"
                 }`}
@@ -156,15 +196,24 @@ export function LogEntryModal({
             {contactMode === "existing" ? (
               <select
                 value={contactId}
-                onChange={(e) => setContactId(e.target.value)}
+                onChange={(e) => handleContactChange(e.target.value)}
                 className="w-full rounded-lg border border-black/10 bg-background px-3 py-2 text-sm outline-none focus:border-primary"
               >
                 <option value="">Select a contact...</option>
-                {contacts.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.role})
-                  </option>
-                ))}
+                <optgroup label="Dyers">
+                  {dyers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Knitters">
+                  {knitters.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
             ) : (
               <div className="flex gap-2">
@@ -192,7 +241,7 @@ export function LogEntryModal({
               <label className="mb-1 block text-xs font-medium text-foreground/60">Type</label>
               <select
                 value={type}
-                onChange={(e) => setType(e.target.value as "sent" | "received")}
+                onChange={(e) => handleTypeChange(e.target.value as "sent" | "received")}
                 className="w-full rounded-lg border border-black/10 bg-background px-3 py-2 text-sm outline-none focus:border-primary"
               >
                 <option value="sent">Sent</option>
@@ -232,6 +281,34 @@ export function LogEntryModal({
               {availableStock.length === 0 && (
                 <p className="mt-1 text-xs text-danger">
                   No factory stock available. Add stock first from the Factory Stock page.
+                </p>
+              )}
+            </div>
+          )}
+
+          {showReceivedYarnType && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-foreground/60">
+                Yarn Type (optional)
+              </label>
+              <select
+                value={yarnType}
+                onChange={(e) => setYarnType(e.target.value)}
+                disabled={loadingBreakdown}
+                className="w-full rounded-lg border border-black/10 bg-background px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
+              >
+                <option value="">
+                  {loadingBreakdown ? "Loading..." : "Select yarn type..."}
+                </option>
+                {yarnBreakdown.map((s) => (
+                  <option key={s.yarnType} value={s.yarnType}>
+                    {s.yarnType} ({s.totalBagsSent.toLocaleString()} bags sent)
+                  </option>
+                ))}
+              </select>
+              {!loadingBreakdown && yarnBreakdown.length === 0 && (
+                <p className="mt-1 text-xs text-foreground/40">
+                  No bags have been sent to this contact yet.
                 </p>
               )}
             </div>

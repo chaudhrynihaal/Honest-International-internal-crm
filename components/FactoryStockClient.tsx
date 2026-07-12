@@ -13,6 +13,47 @@ interface FactoryStockClientProps {
   summary: FactoryStockSummaryRow[];
 }
 
+function KgPerBagInput({ yarnType, kgPerBag, onSaved }: { yarnType: string; kgPerBag: number; onSaved: () => void }) {
+  const [value, setValue] = useState(String(kgPerBag));
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const num = Number(value);
+    if (!num || num <= 0 || num === kgPerBag) {
+      setValue(String(kgPerBag));
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/yarn-types/${encodeURIComponent(yarnType)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kgPerBag: num }),
+      });
+      if (res.ok) onSaved();
+      else setValue(String(kgPerBag));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <label className="mt-2 flex items-center gap-1.5 text-xs text-foreground/50">
+      Kg/Bag:
+      <input
+        type="number"
+        min="0"
+        step="0.01"
+        value={value}
+        disabled={saving}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={save}
+        className="w-16 rounded border border-black/10 bg-background px-1.5 py-0.5 text-xs text-foreground outline-none focus:border-primary disabled:opacity-50"
+      />
+    </label>
+  );
+}
+
 export function FactoryStockClient({ lots, summary }: FactoryStockClientProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const router = useRouter();
@@ -54,6 +95,7 @@ export function FactoryStockClient({ lots, summary }: FactoryStockClientProps) {
           <div key={s.yarnType} className="card p-5">
             <p className="truncate text-sm font-medium text-foreground/60">{s.yarnType}</p>
             <p className="mt-2 text-2xl font-semibold text-primary">{s.totalBags.toLocaleString()} bags</p>
+            <KgPerBagInput yarnType={s.yarnType} kgPerBag={s.kgPerBag} onSaved={() => router.refresh()} />
           </div>
         ))}
       </div>

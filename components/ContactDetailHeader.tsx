@@ -21,12 +21,26 @@ interface ContactDetailHeaderProps {
   factoryStock: FactoryStockSummaryRow[];
 }
 
-function BalanceCard({ label, value, unit }: { label: string; value: number; unit: string }) {
+function BalanceCard({
+  label,
+  value,
+  unit,
+  disabled,
+}: {
+  label: string;
+  value: number;
+  unit: string;
+  disabled?: boolean;
+}) {
   const isNeg = value < 0;
   return (
-    <div className="card p-4">
+    <div className={`card p-4 ${disabled ? "opacity-40" : ""}`}>
       <p className="text-xs font-medium text-foreground/50">{label}</p>
-      <p className={`mt-1 text-xl font-semibold ${isNeg ? "text-danger" : "text-success"}`}>
+      <p
+        className={`mt-1 text-xl font-semibold ${
+          disabled ? "text-foreground/50" : isNeg ? "text-danger" : "text-success"
+        }`}
+      >
         {value.toLocaleString()} {unit}
       </p>
     </div>
@@ -79,8 +93,8 @@ export function ContactDetailHeader({ contact, balance, contacts, factoryStock }
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <BalanceCard label="Running Balance (Bags)" value={balance.balanceBags} unit="bags" />
-        <BalanceCard label="Running Balance (Kg)" value={balance.balanceKg} unit="kg" />
+        <BalanceCard label="Running Balance (Bags)" value={balance.balanceBags} unit="bags" disabled />
+        <BalanceCard label="Running Balance (Kg)" value={balance.balanceKg} unit="kg" disabled />
       </div>
 
       {modalOpen && (

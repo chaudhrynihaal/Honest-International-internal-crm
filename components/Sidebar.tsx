@@ -13,12 +13,16 @@ import {
   Boxes,
   Package,
   LogOut,
+  Droplet,
+  Shirt,
 } from "lucide-react";
 import { logout } from "@/app/login/actions";
 
 const NAV_ITEMS = [
   { href: "/", label: "Home", icon: Home },
   { href: "/factory-stock", label: "Factory Stock", icon: Package },
+  { href: "/dyeing", label: "Dyeing", icon: Droplet },
+  { href: "/knitting", label: "Knitting", icon: Shirt },
   { href: "/notes", label: "Notes", icon: StickyNote },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/ledger", label: "Ledger", icon: Landmark },

@@ -43,4 +43,5 @@ export interface FactoryStockSummaryRow {
   yarnType: string;
   totalBags: number;
   lotCount: number;
+  kgPerBag: number;
 }

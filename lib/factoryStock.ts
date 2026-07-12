@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "./supabase/admin";
 import { newId } from "./id";
+import { getYarnTypeRates } from "./yarnTypes";
 import type { FactoryStockLot, FactoryStockSummaryRow } from "./types";
 
 export async function getFactoryStockLots(): Promise<FactoryStockLot[]> {
@@ -14,7 +15,10 @@ export async function getFactoryStockLots(): Promise<FactoryStockLot[]> {
 }
 
 export async function getFactoryStockSummary(): Promise<FactoryStockSummaryRow[]> {
-  const { data, error } = await supabaseAdmin.from("FactoryStock").select("yarnType, bags");
+  const [{ data, error }, rates] = await Promise.all([
+    supabaseAdmin.from("FactoryStock").select("yarnType, bags"),
+    getYarnTypeRates(),
+  ]);
   if (error) throw error;
 
   const map = new Map<string, FactoryStockSummaryRow>();
@@ -25,7 +29,12 @@ export async function getFactoryStockSummary(): Promise<FactoryStockSummaryRow[]
       existing.totalBags += lot.bags;
       existing.lotCount += 1;
     } else {
-      map.set(lot.yarnType, { yarnType: lot.yarnType, totalBags: lot.bags, lotCount: 1 });
+      map.set(lot.yarnType, {
+        yarnType: lot.yarnType,
+        totalBags: lot.bags,
+        lotCount: 1,
+        kgPerBag: rates[lot.yarnType] ?? 1,
+      });
     }
   }
 
